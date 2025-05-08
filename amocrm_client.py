@@ -1,5 +1,8 @@
 import requests
+import logging
 from config import Config
+
+logger = logging.getLogger(__name__)
 
 class AmoCRMClient:
     def __init__(self):
@@ -9,19 +12,38 @@ class AmoCRMClient:
             "Content-Type": "application/json"
         }
 
+    def get_lead_by_id(self, lead_id):
+        url = f"{self.base_url}/leads/{lead_id}"
+        try:
+            logger.info(f"Sending request to {url}")
+            response = requests.get(url, headers=self.headers)
+            logger.info(f"Response status: {response.status_code}, content: {response.text}")
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Failed to fetch lead {lead_id}: {str(e)}")
+            raise
+
     def get_leads_by_pipeline_status(self, pipeline_id, status_id):
-        """Получить сделки из определённой стадии воронки."""
         url = f"{self.base_url}/leads"
         params = {
             "filter[pipeline_id]": pipeline_id,
             "filter[statuses][0][status_id]": status_id
         }
-        response = requests.get(url, headers=self.headers, params=params)
-        response.raise_for_status()
-        return response.json()["_embedded"]["leads"]
+        try:
+            logger.info(f"Sending request to {url} with params {params}")
+            response = requests.get(url, headers=self.headers, params=params)
+            logger.info(f"Response status: {response.status_code}, content: {response.text}")
+            response.raise_for_status()
+            data = response.json()
+            leads = data.get("_embedded", {}).get("leads", [])
+            logger.info(f"Found {len(leads)} leads in pipeline {pipeline_id}, status {status_id}")
+            return leads
+        except requests.RequestException as e:
+            logger.error(f"Failed to fetch leads: {str(e)}")
+            raise
 
     def update_lead(self, lead_id, custom_field_id, payment_link):
-        """Обновить поле сделки с ссылкой на оплату."""
         url = f"{self.base_url}/leads/{lead_id}"
         data = {
             "custom_fields_values": [
@@ -31,17 +53,58 @@ class AmoCRMClient:
                 }
             ]
         }
-        response = requests.patch(url, headers=self.headers, json=data)
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = requests.patch(url, headers=self.headers, json=data)
+            logger.info(f"Update lead {lead_id} response: {response.status_code}, {response.text}")
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Failed to update lead {lead_id}: {str(e)}")
+            raise
 
     def add_note(self, lead_id, note_text):
-        """Добавить примечание к сделке."""
         url = f"{self.base_url}/leads/{lead_id}/notes"
         data = {
             "note_type": "common",
             "params": {"text": note_text}
         }
-        response = requests.post(url, headers=self.headers, json=[data])
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = requests.post(url, headers=self.headers, json=[data])
+            logger.info(f"Add note to lead {lead_id} response: {response.status_code}, {response.text}")
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Failed to add note to lead {lead_id}: {str(e)}")
+            raise
+
+    def add_tag(self, lead_id, tag_name):
+        url = f"{self.base_url}/leads/{lead_id}"
+        data = {
+            "_embedded": {
+                "tags": [
+                    {"name": tag_name}
+                ]
+            }
+        }
+        try:
+            response = requests.patch(url, headers=self.headers, json=data)
+            logger.info(f"Add tag to lead {lead_id} response: {response.status_code}, {response.text}")
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Failed to add tag to lead {lead_id}: {str(e)}")
+            raise
+
+    def change_status(self, lead_id, status_id):
+        url = f"{self.base_url}/leads/{lead_id}"
+        data = {
+            "status_id": status_id
+        }
+        try:
+            response = requests.patch(url, headers=self.headers, json=data)
+            logger.info(f"Change status of lead {lead_id} response: {response.status_code}, {response.text}")
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Failed to change status of lead {lead_id}: {str(e)}")
+            raise

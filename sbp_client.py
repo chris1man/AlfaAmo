@@ -1,58 +1,42 @@
 import requests
+import logging
+
 from config import Config
-from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 class SBPClient:
-    def generate_payment_link(self, amount, order_number, description, return_url):
-        """Генерирует ссылку на оплату через СБП Альфа-Банка."""
-        base_url = "https://alfa.rbsuat.com/payment/rest" if Config.SBP_TEST_ENV else "https://alfa.rbs.com/payment/rest"
-        register_url = f"{base_url}/register.do"
-        
-        payload = {
-            "userName": Config.SBP_MERCHANT_LOGIN,
-            "password": Config.SBP_MERCHANT_PASSWORD,
+    def __init__(self):
+        self.base_url = "https://payment.alfabank.ru/payment/rest" if not Config.SBP_TEST_ENV else "https://alfa.rbsuat.com/payment/rest"
+        self.merchant_login = Config.SBP_MERCHANT_LOGIN
+        self.merchant_password = Config.SBP_MERCHANT_PASSWORD
+        self.payment_token = Config.SBP_PAYMENT_TOKEN
+
+    def create_payment_link(self, amount, order_number):
+        url = f"{self.base_url}/register.do"
+        params = {
             "amount": amount,
             "orderNumber": order_number,
-            "returnUrl": return_url,
-            "description": description,
+            "returnUrl": Config.SBP_RETURN_URL,
+            "description": "Payment",
             "language": "ru",
-            "currency": "643",
-            "pageView": "DESKTOP"
+            "pageView": "DESKTOP",
+            "callbackUrl": "https://alfa-amocrm.ru/payment_callback"
         }
-        
-        try:
-            response = requests.post(register_url, data=payload)
-            response.raise_for_status()
-            response_data = response.json()
-            
-            if "errorCode" in response_data and response_data["errorCode"] != "0":
-                return {
-                    "success": False,
-                    "error": f"Ошибка {response_data['errorCode']}: {response_data.get('errorMessage', 'Неизвестная ошибка')}"
-                }
-            
-            form_url = response_data.get("formUrl")
-            order_id = response_data.get("orderId")
-            
-            if not form_url or not order_id:
-                return {
-                    "success": False,
-                    "error": "Не удалось получить formUrl или orderId"
-                }
-            
-            return {
-                "success": True,
-                "payment_link": form_url,
-                "order_id": order_id
-            }
-        
-        except requests.RequestException as e:
-            return {
-                "success": False,
-                "error": f"Ошибка HTTP-запроса: {str(e)}"
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Неизвестная ошибка: {str(e)}"
-            }
+
+        if Config.SBP_TEST_ENV:
+            # Тестовая среда: используем userName и password
+            params["userName"] = self.merchant_login
+            params["password"] = self.merchant_password
+        else:
+            # Продуктивная среда: используем токен
+            params["token"] = self.payment_token
+
+        response = requests.post(url, data=params)
+        logger.info(f"Create payment link response: {response.status_code}, {response.text}")
+        response.raise_for_status()
+        response_data = response.json()
+        if "errorCode" in response_data:
+            error_message = response_data.get("errorMessage", "Unknown error")
+            raise Exception(f"Failed to create payment link: {response_data}")
+        return response_data
