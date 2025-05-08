@@ -1,0 +1,11 @@
+[0;1;32m●[0m sbp_amocrm.service - Gunicorn instance for sbp_amocrm Flask app
+     Loaded: loaded (/etc/systemd/system/sbp_amocrm.service; enabled; vendor preset: enabled)
+     Active: [0;1;32mactive (running)[0m since Wed 2025-05-07 13:25:17 MSK; 37ms ago
+   Main PID: 84387 (gunicorn)
+      Tasks: 1 (limit: 1067)
+     Memory: 3.2M
+        CPU: 17ms
+     CGroup: /system.slice/sbp_amocrm.service
+             └─84387 /root/AlfaAmo/venv/bin/python3 /root/AlfaAmo/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:8000 webhook_handler:app
+
+May 07 13:25:17 4690251-qe49169 systemd[1]: Started Gunicorn instance for sbp_amocrm Flask app.

@@ -1,0 +1,27 @@
+# Виртуальное окружение
+venv/
+env/
+*.pyc
+__pycache__/
+
+# Конфиденциальные файлы
+.env
+
+# Логи
+*.log
+webapp.log
+callback.log
+celery.log
+config.log
+gunicorn.log
+
+# Временные файлы
+*.swp
+*.swo
+*.bak
+
+# Бэкапы
+backup/
+
+# Локальные данные
+payments.json
