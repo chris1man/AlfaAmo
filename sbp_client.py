@@ -21,15 +21,14 @@ class SBPClient:
             "description": "Payment",
             "language": "ru",
             "pageView": "DESKTOP",
-            "callbackUrl": "https://alfa-amocrm.ru/payment_callback"
+            "callbackUrl": "https://alfa-amocrm.ru/payment_callback",
+            "sessionTimeoutSecs": 86400  # Устанавливаем 24 часа
         }
 
         if Config.SBP_TEST_ENV:
-            # Тестовая среда: используем userName и password
             params["userName"] = self.merchant_login
             params["password"] = self.merchant_password
         else:
-            # Продуктивная среда: используем токен
             params["token"] = self.payment_token
 
         response = requests.post(url, data=params)
