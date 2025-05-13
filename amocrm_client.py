@@ -78,22 +78,37 @@ class AmoCRMClient:
             raise
 
     def add_tag(self, lead_id, tag_name):
-        url = f"{self.base_url}/leads/{lead_id}"
+        # Получаем текущие данные сделки
+        lead = self.get_lead_by_id(lead_id)
+        
+        # Извлекаем существующие теги
+        existing_tags = lead.get("_embedded", {}).get("tags", [])
+        existing_tag_names = [tag["name"] for tag in existing_tags]
+
+        # Проверяем, есть ли уже такой тег
+        if tag_name in existing_tag_names:
+            logger.info(f"Tag '{tag_name}' already exists on lead {lead_id}, skipping")
+            return lead
+
+        # Добавляем новый тег к списку
+        existing_tag_names.append(tag_name)
+        new_tags = [{"name": name} for name in existing_tag_names]
+
+        # Обновляем сделку с новым списком тегов
+        url = f"https://{self.domain}/api/v4/leads/{lead_id}"
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Content-Type": "application/json"
+        }
         data = {
             "_embedded": {
-                "tags": [
-                    {"name": tag_name}
-                ]
+                "tags": new_tags
             }
         }
-        try:
-            response = requests.patch(url, headers=self.headers, json=data)
-            logger.info(f"Add tag to lead {lead_id} response: {response.status_code}, {response.text}")
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            logger.error(f"Failed to add tag to lead {lead_id}: {str(e)}")
-            raise
+        response = requests.patch(url, headers=headers, json=data)
+        logger.info(f"Add tag to lead {lead_id} response: {response.status_code}, {response.text}")
+        response.raise_for_status()
+        return response.json()
 
     def change_status(self, lead_id, status_id):
         url = f"{self.base_url}/leads/{lead_id}"
