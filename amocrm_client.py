@@ -95,20 +95,20 @@ class AmoCRMClient:
         new_tags = [{"name": name} for name in existing_tag_names]
 
         # Обновляем сделку с новым списком тегов
-        url = f"https://{self.domain}/api/v4/leads/{lead_id}"
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json"
-        }
+        url = f"{self.base_url}/leads/{lead_id}"
         data = {
             "_embedded": {
                 "tags": new_tags
             }
         }
-        response = requests.patch(url, headers=headers, json=data)
-        logger.info(f"Add tag to lead {lead_id} response: {response.status_code}, {response.text}")
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = requests.patch(url, headers=self.headers, json=data)
+            logger.info(f"Add tag to lead {lead_id} response: {response.status_code}, {response.text}")
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Failed to add tag to lead {lead_id}: {str(e)}")
+            raise
 
     def change_status(self, lead_id, status_id):
         url = f"{self.base_url}/leads/{lead_id}"

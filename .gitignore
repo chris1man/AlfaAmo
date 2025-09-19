@@ -14,6 +14,12 @@ callback.log
 celery.log
 config.log
 gunicorn.log
+log_cleanup.log
+logs/
+
+# Временные скрипты (удалены после настройки)
+# force_cleanup_logs.py
+# simple_cleanup.py
 
 # Временные файлы
 *.swp

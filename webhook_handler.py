@@ -14,24 +14,13 @@ from urllib.parse import parse_qs
 from amocrm_client import AmoCRMClient
 from sbp_client import SBPClient
 from tasks import process_lead
+from logging_config import loggers
 
 app = Flask(__name__)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/root/AlfaAmo/webapp.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-callback_logger = logging.getLogger('callback_handler')
-callback_handler = logging.FileHandler('/root/AlfaAmo/callback.log')
-callback_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-callback_logger.setLevel(logging.INFO)
-callback_logger.addHandler(callback_handler)
+# Используем настроенные логгеры
+logger = loggers['webapp']
+callback_logger = loggers['callback']
 
 amocrm_client = AmoCRMClient()
 sbp_client = SBPClient()

@@ -8,18 +8,10 @@ import random
 import string
 import logging
 import os
+from logging_config import loggers
 
-# Настройка логирования для Celery
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/root/AlfaAmo/celery.log', mode='a'),  # Убедимся, что файл открывается в режиме добавления
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger('webhook_handler')
-logger.setLevel(logging.INFO)
+# Используем настроенный логгер для Celery
+logger = loggers['celery']
 
 app = Celery('tasks', broker='pyamqp://guest@localhost//')
 app.conf.task_serializer = 'json'
