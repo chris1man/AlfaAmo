@@ -64,6 +64,16 @@ def setup_logging():
     gunicorn_handler.setFormatter(formatter)
     gunicorn_handler.setLevel(logging.INFO)
     
+    # Ротация okoCRM webhook логов
+    oko_webhook_handler = logging.handlers.RotatingFileHandler(
+        '/root/AlfaAmo/oko_webhook.log',
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=7,  # Хранить 7 файлов бэкапа
+        encoding='utf-8'
+    )
+    oko_webhook_handler.setFormatter(formatter)
+    oko_webhook_handler.setLevel(logging.INFO)
+    
     # Консольный обработчик
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
@@ -93,11 +103,17 @@ def setup_logging():
     gunicorn_logger.setLevel(logging.INFO)
     gunicorn_logger.propagate = False
     
+    oko_webhook_logger = logging.getLogger('oko_webhook')
+    oko_webhook_logger.addHandler(oko_webhook_handler)
+    oko_webhook_logger.setLevel(logging.INFO)
+    oko_webhook_logger.propagate = False
+    
     return {
         'webapp': webapp_logger,
         'callback': callback_logger,
         'celery': celery_logger,
-        'gunicorn': gunicorn_logger
+        'gunicorn': gunicorn_logger,
+        'oko_webhook': oko_webhook_logger
     }
 
 def cleanup_old_logs():

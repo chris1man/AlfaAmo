@@ -31,3 +31,12 @@ backup/
 
 # Локальные данные
 payments.json
+
+#Логи
+callback.log.1
+callback.log.2
+callback.log.3
+callback.log.7
+callback.log.6
+callback.log.5
+callback.log.4
