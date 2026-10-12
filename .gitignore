@@ -40,3 +40,6 @@ callback.log.7
 callback.log.6
 callback.log.5
 callback.log.4
+
+# Локальные секреты MCP
+yookassa-mcp.env
