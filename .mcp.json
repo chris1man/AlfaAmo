@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "yookassa": {
+      "type": "http",
+      "url": "https://mcp.yookassa.ru",
+      "headers": {
+        "Authorization": "Bearer ${YOOKASSA_MCP_TOKEN}"
+      }
+    }
+  }
+}
