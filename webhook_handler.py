@@ -15,6 +15,7 @@ from amocrm_client import AmoCRMClient
 from sbp_client import SBPClient
 from tasks import process_lead
 from logging_config import loggers
+from payments_store import load_payments, save_payments, payments_lock
 
 app = Flask(__name__)
 
@@ -24,36 +25,12 @@ callback_logger = loggers['callback']
 
 amocrm_client = AmoCRMClient()
 sbp_client = SBPClient()
-PAYMENTS_FILE = "/root/AlfaAmo/payments.json"
-
 CALLBACK_SECRET_KEY = Config.CALLBACK_SECRET_KEY
 
-def load_payments():
-    if not os.path.exists(PAYMENTS_FILE):
-        logger.info("Payments file does not exist, creating new one")
-        save_payments({})
-        return {}
-    try:
-        with open(PAYMENTS_FILE, "r") as f:
-            content = f.read().strip()
-            if not content:
-                logger.info("Payments file is empty, initializing with {}")
-                return {}
-            return json.loads(content)
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in payments file: {str(e)}")
-        save_payments({})
-        return {}
-    except Exception as e:
-        logger.error(f"Failed to load payments: {str(e)}")
-        return {}
-
-def save_payments(payments):
-    try:
-        with open(PAYMENTS_FILE, "w") as f:
-            json.dump(payments, f, indent=4)
-    except Exception as e:
-        logger.error(f"Failed to save payments: {str(e)}")
+STATUS_PAID = 54415022
+STATUS_PAYMENT_FAILED = 54415023
+# Операции банка, после которых оплата считается неуспешной
+DECLINED_OPERATIONS = {"declined", "declined_timeout"}
 
 def clean_old_payments(payments, max_age_seconds=7*24*3600):
     current_time = time.time()
@@ -140,38 +117,55 @@ def webhook():
         logger.error(f"Критическая ошибка в вебхуке: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 200
 
+def _is_check_payments_allowed():
+    """Токен CHECK_PAYMENTS_TOKEN (заголовок X-Check-Token или ?token=); без токена только с localhost."""
+    expected = os.getenv("CHECK_PAYMENTS_TOKEN")
+    if expected:
+        supplied = request.headers.get("X-Check-Token") or request.args.get("token") or ""
+        return hmac.compare_digest(supplied, expected)
+    return request.remote_addr in ("127.0.0.1", "::1") and "X-Forwarded-For" not in request.headers
+
 @app.route("/check_payments", methods=["GET"])
 def check_payments():
+    if not _is_check_payments_allowed():
+        return jsonify({"status": "forbidden"}), 403
+
     payments = clean_old_payments(load_payments())
-    updated_payments = payments.copy()
+    paid_leads = []
 
     for lead_id, payment in payments.items():
         order_number = payment["order_number"]
         try:
-            status_url = "https://alfa.rbsuat.com/payment/rest/getOrderStatus.do"
-            status_params = {
-                "userName": Config.SBP_MERCHANT_LOGIN,
-                "password": Config.SBP_MERCHANT_PASSWORD,
-                "orderNumber": order_number,
-                "language": "ru"
-            }
-            response = requests.get(status_url, params=status_params)
-            logger.info(f"Check payment status for {lead_id}: {response.status_code}, {response.text}")
+            response = requests.get(
+                f"{sbp_client.base_url}/getOrderStatus.do",
+                params=sbp_client.auth_params({"orderNumber": order_number, "language": "ru"}),
+                timeout=30,
+            )
+            logger.info(f"Check payment status for {lead_id}: {response.status_code}")
             response.raise_for_status()
             status_data = response.json()
 
             if status_data.get("orderStatus") == 2:
                 logger.info(f"Оплата для сделки {lead_id} успешна")
                 amocrm_client.add_tag(lead_id, "оплачено")
-                amocrm_client.change_status(lead_id, 54415022)
-                del updated_payments[lead_id]
-                save_payments(updated_payments)
-                logger.info(f"Сделка {lead_id} удалена из payments.json")
+                amocrm_client.change_status(lead_id, STATUS_PAID)
+                paid_leads.append(lead_id)
         except Exception as e:
             logger.error(f"Ошибка проверки оплаты для сделки {lead_id}: {str(e)}")
             continue
 
-    return jsonify({"status": "checked", "remaining_payments": len(updated_payments)})
+    if paid_leads:
+        with payments_lock():
+            current = load_payments()
+            for lead_id in paid_leads:
+                current.pop(lead_id, None)
+            save_payments(current)
+            remaining = len(current)
+        logger.info(f"Из payments.json удалены оплаченные сделки: {paid_leads}")
+    else:
+        remaining = len(payments)
+
+    return jsonify({"status": "checked", "remaining_payments": remaining})
 
 @app.route("/payment_callback", methods=["GET"])
 def payment_callback():
@@ -191,28 +185,31 @@ def payment_callback():
         callback_logger.error("Некорректные данные в callback: отсутствуют обязательные параметры")
         return jsonify({"status": "error", "message": "Missing required parameters"}), 400
 
-    if checksum:
-        params_copy = dict(params)
-        params_copy.pop("checksum", None)
-        params_copy.pop("sign_alias", None)
-        sorted_params = sorted(params_copy.items(), key=lambda x: x[0])
-        sign_string = ""
-        for key, value in sorted_params:
-            if "%" in value:
-                value = urllib.parse.unquote(value)
-            sign_string += f"{key};{value};"
-        callback_logger.info(f"Sign string for checksum: {sign_string}")
+    if not checksum:
+        callback_logger.error("Callback без checksum отклонён")
+        return jsonify({"status": "error", "message": "Missing checksum"}), 400
 
-        computed_checksum = hmac.new(
-            CALLBACK_SECRET_KEY.encode('utf-8'),
-            sign_string.encode('utf-8'),
-            hashlib.sha256
-        ).hexdigest().upper()
+    params_copy = dict(params)
+    params_copy.pop("checksum", None)
+    params_copy.pop("sign_alias", None)
+    sorted_params = sorted(params_copy.items(), key=lambda x: x[0])
+    sign_string = ""
+    for key, value in sorted_params:
+        if "%" in value:
+            value = urllib.parse.unquote(value)
+        sign_string += f"{key};{value};"
+    callback_logger.info(f"Sign string for checksum: {sign_string}")
 
-        if computed_checksum != checksum:
-            callback_logger.error(f"Неверная контрольная сумма: ожидаемая {computed_checksum}, полученная {checksum}")
-            return jsonify({"status": "error", "message": "Invalid checksum"}), 400
-        callback_logger.info("Контрольная сумма успешно проверена")
+    computed_checksum = hmac.new(
+        CALLBACK_SECRET_KEY.encode('utf-8'),
+        sign_string.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest().upper()
+
+    if not hmac.compare_digest(computed_checksum, checksum):
+        callback_logger.error(f"Неверная контрольная сумма: ожидаемая {computed_checksum}, полученная {checksum}")
+        return jsonify({"status": "error", "message": "Invalid checksum"}), 400
+    callback_logger.info("Контрольная сумма успешно проверена")
 
     lead_id = None
     payments = load_payments()
@@ -234,18 +231,20 @@ def payment_callback():
 
     if operation == "deposited" and int(status) == 1:
         lead = amocrm_client.get_lead_by_id(lead_id)
-        if lead.get("status_id") == 54415022:
+        if lead.get("status_id") == STATUS_PAID:
             callback_logger.info(f"Сделка {lead_id} уже обработана ранее (статус 54415022), пропускаем")
             return jsonify({"status": "received"}), 200
 
         amocrm_client.add_tag(lead_id, "оплачено")
-        amocrm_client.change_status(lead_id, 54415022)
-        del payments[lead_id]
-        save_payments(payments)
+        amocrm_client.change_status(lead_id, STATUS_PAID)
+        with payments_lock():
+            current = load_payments()
+            current.pop(lead_id, None)
+            save_payments(current)
         callback_logger.info(f"Сделка {lead_id} обработана по callback: успешная оплата, операция: {operation}")
-    elif operation == "declined_timeout":
-        amocrm_client.change_status(lead_id, 54415023)
-        callback_logger.info(f"Сделка {lead_id} перемещена в колонку 'Оплата не прошла' из-за отклонения по таймауту")
+    elif operation in DECLINED_OPERATIONS:
+        amocrm_client.change_status(lead_id, STATUS_PAYMENT_FAILED)
+        callback_logger.info(f"Сделка {lead_id} перемещена в колонку 'Оплата не прошла': операция {operation}")
     else:
         callback_logger.info(f"Событие обработано: операция {operation}, статус {status}, примечание добавлено")
 

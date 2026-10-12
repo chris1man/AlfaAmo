@@ -9,6 +9,7 @@ import string
 import logging
 import os
 from logging_config import loggers
+from payments_store import load_payments, save_payments, payments_lock
 
 # Используем настроенный логгер для Celery
 logger = loggers['celery']
@@ -21,39 +22,6 @@ app.conf.task_track_started = True
 
 amocrm_client = AmoCRMClient()
 sbp_client = SBPClient()
-
-PAYMENTS_FILE = "/root/AlfaAmo/payments.json"
-
-logger.info("Celery worker started, logging configured")
-
-def load_payments():
-    logger.info(f"Loading payments from {PAYMENTS_FILE}")
-    if not os.path.exists(PAYMENTS_FILE):
-        logger.info("Payments file does not exist, creating new one")
-        save_payments({})
-        return {}
-    try:
-        with open(PAYMENTS_FILE, "r") as f:
-            content = f.read().strip()
-            if not content:
-                logger.info("Payments file is empty, initializing with {}")
-                return {}
-            return json.loads(content)
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in payments file: {str(e)}")
-        save_payments({})
-        return {}
-    except Exception as e:
-        logger.error(f"Failed to load payments: {str(e)}")
-        return {}
-
-def save_payments(payments):
-    logger.info(f"Saving payments to {PAYMENTS_FILE}")
-    try:
-        with open(PAYMENTS_FILE, "w") as f:
-            json.dump(payments, f, indent=4)
-    except Exception as e:
-        logger.error(f"Failed to save payments: {str(e)}")
 
 def generate_order_number(lead_id):
     logger.info(f"Generating order number for lead_id: {lead_id}")
@@ -107,14 +75,16 @@ def process_lead(lead_id, status_id, pipeline_id):
                 amocrm_client.add_note(lead_id, note_text)
                 logger.info(f"Note added to lead {lead_id}")
 
-                payments[lead_id] = {
-                    "order_number": order_number,
-                    "amount": amount,
-                    "form_url": payment_link,
-                    "order_id": order_id,
-                    "created_at": time.time()
-                }
-                save_payments(payments)
+                with payments_lock():
+                    payments = load_payments()
+                    payments[lead_id] = {
+                        "order_number": order_number,
+                        "amount": amount,
+                        "form_url": payment_link,
+                        "order_id": order_id,
+                        "created_at": time.time()
+                    }
+                    save_payments(payments)
                 logger.info(f"Lead {lead_id} updated in payments.json with new amount and link")
             else:
                 logger.info(f"Amounts are the same, skipping processing for lead {lead_id}")
@@ -139,14 +109,16 @@ def process_lead(lead_id, status_id, pipeline_id):
         amocrm_client.add_note(lead_id, note_text)
         logger.info(f"Note added to lead {lead_id}")
 
-        payments[lead_id] = {
-            "order_number": order_number,
-            "amount": amount,
-            "form_url": payment_link,
-            "order_id": order_id,
-            "created_at": time.time()
-        }
-        save_payments(payments)
+        with payments_lock():
+            payments = load_payments()
+            payments[lead_id] = {
+                "order_number": order_number,
+                "amount": amount,
+                "form_url": payment_link,
+                "order_id": order_id,
+                "created_at": time.time()
+            }
+            save_payments(payments)
         logger.info(f"Lead {lead_id} saved to payments.json")
     except Exception as e:
         logger.error(f"Error during async processing of lead {lead_id}: {str(e)}")

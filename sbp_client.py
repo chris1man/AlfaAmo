@@ -39,3 +39,13 @@ class SBPClient:
             error_message = response_data.get("errorMessage", "Unknown error")
             raise Exception(f"Failed to create payment link: {response_data}")
         return response_data
+
+    def auth_params(self, params=None):
+        """Реквизиты мерчанта для запросов к банку (логин/пароль на тесте, токен в бою)."""
+        result = dict(params or {})
+        if Config.SBP_TEST_ENV:
+            result["userName"] = self.merchant_login
+            result["password"] = self.merchant_password
+        else:
+            result["token"] = self.payment_token
+        return result
