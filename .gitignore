@@ -47,3 +47,4 @@ yookassa-mcp.env
 # Блокировка и временные файлы payments.json
 payments.json.lock
 .payments.*.tmp
+payments.json.lead-*.lock

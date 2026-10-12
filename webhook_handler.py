@@ -15,7 +15,7 @@ from amocrm_client import AmoCRMClient
 from sbp_client import SBPClient
 from tasks import process_lead
 from logging_config import loggers
-from payments_store import load_payments, save_payments, payments_lock
+from payments_store import load_payments, save_payments, payments_lock, get_orders, find_lead_by_order
 
 app = Flask(__name__)
 
@@ -62,8 +62,20 @@ def index():
 def webhook_test():
     data = request.get_json(silent=True) or request.form
     logger.info(f"Тестовый вебхук: {json.dumps(data, indent=2)}")
-    logger.info(f"Заголовки: {dict(request.headers)}")
     return jsonify({"status": "received"}), 200
+
+def _is_own_amocrm_account(data):
+    """Вебхук amoCRM нельзя подписать секретом, поэтому сверяем хотя бы аккаунт из тела запроса.
+
+    Это не защита от того, кто знает id аккаунта: главная проверка в process_lead,
+    воронка и этап берутся из ответа amoCRM по id сделки.
+    """
+    account = data.get("account") if isinstance(data, dict) else None
+    if not isinstance(account, dict):
+        return False
+    subdomain = str(Config.AMOCRM_DOMAIN or "").split(".")[0]
+    return str(account.get("id")) == str(Config.AMOCRM_ACCOUNT_ID) or \
+        (bool(subdomain) and account.get("subdomain") == subdomain)
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -87,6 +99,10 @@ def webhook():
         else:
             logger.warning(f"Неподдерживаемый Content-Type: {content_type}")
             return jsonify({"status": "ignored_non_json"}), 200
+
+        if data and not _is_own_amocrm_account(data):
+            logger.warning("Вебхук отклонён: аккаунт amoCRM в запросе не совпадает с нашим")
+            return jsonify({"status": "ignored"}), 200
 
         if not data or "leads" not in data or "status" not in data["leads"]:
             logger.info("Нет обновленных сделок")
@@ -134,25 +150,26 @@ def check_payments():
     paid_leads = []
 
     for lead_id, payment in payments.items():
-        order_number = payment["order_number"]
-        try:
-            response = requests.get(
-                f"{sbp_client.base_url}/getOrderStatus.do",
-                params=sbp_client.auth_params({"orderNumber": order_number, "language": "ru"}),
-                timeout=30,
-            )
-            logger.info(f"Check payment status for {lead_id}: {response.status_code}")
-            response.raise_for_status()
-            status_data = response.json()
+        for order in get_orders(payment):
+            try:
+                response = requests.post(
+                    f"{sbp_client.base_url}/getOrderStatus.do",
+                    data=sbp_client.auth_params({"orderNumber": order["order_number"], "language": "ru"}),
+                    timeout=30,
+                )
+                logger.info(f"Check payment status for {lead_id} / {order['order_number']}: {response.status_code}")
+                response.raise_for_status()
+                status_data = response.json()
 
-            if status_data.get("orderStatus") == 2:
-                logger.info(f"Оплата для сделки {lead_id} успешна")
-                amocrm_client.add_tag(lead_id, "оплачено")
-                amocrm_client.change_status(lead_id, STATUS_PAID)
-                paid_leads.append(lead_id)
-        except Exception as e:
-            logger.error(f"Ошибка проверки оплаты для сделки {lead_id}: {str(e)}")
-            continue
+                if status_data.get("orderStatus") == 2:
+                    logger.info(f"Оплата для сделки {lead_id} успешна (заказ {order['order_number']})")
+                    amocrm_client.add_tag(lead_id, "оплачено")
+                    amocrm_client.change_status(lead_id, STATUS_PAID)
+                    paid_leads.append(lead_id)
+                    break
+            except Exception as e:
+                logger.error(f"Ошибка проверки оплаты для сделки {lead_id}: {str(e)}")
+                continue
 
     if paid_leads:
         with payments_lock():
@@ -211,15 +228,8 @@ def payment_callback():
         return jsonify({"status": "error", "message": "Invalid checksum"}), 400
     callback_logger.info("Контрольная сумма успешно проверена")
 
-    lead_id = None
     payments = load_payments()
-    callback_logger.info(f"Current payments: {json.dumps(payments, indent=2)}")
-
-    for lid, payment in payments.items():
-        callback_logger.info(f"Checking payment: lead_id={lid}, payment={payment}")
-        if payment.get("order_id") == md_order and payment.get("order_number") == order_number:
-            lead_id = lid
-            break
+    lead_id = find_lead_by_order(payments, md_order, order_number)
 
     if not lead_id:
         callback_logger.warning(f"Не найдена сделка с mdOrder: {md_order} и orderNumber: {order_number}")

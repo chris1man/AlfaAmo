@@ -27,6 +27,7 @@ os.environ.update({
 with mock.patch.object(logging.handlers, "RotatingFileHandler", lambda *a, **k: logging.NullHandler()), \
         mock.patch("os.makedirs"):
     import webhook_handler  # noqa: E402
+    import tasks  # noqa: E402
 import payments_store  # noqa: E402
 
 
@@ -128,6 +129,90 @@ class CheckPaymentsAccessTests(StoreTestCase):
                                  environ_overrides={"REMOTE_ADDR": "203.0.113.5"})
         self.assertEqual(bad.status_code, 403)
         self.assertEqual(ok.status_code, 200)
+
+
+class ProcessLeadTests(StoreTestCase):
+    def setUp(self):
+        super().setUp()
+        self.amo = mock.patch.object(tasks, "amocrm_client").start()
+        self.bank = mock.patch.object(tasks, "sbp_client").start()
+        self.lead = {"pipeline_id": tasks.Config.PIPELINE_ID, "status_id": tasks.Config.ALLOWED_STATUS_IDS[0], "price": 100}
+        self.amo.get_lead_by_id.side_effect = lambda _id: dict(self.lead)
+        self.n = 0
+
+        def register(amount, order_number):
+            self.n += 1
+            return {"formUrl": f"https://pay/{self.n}", "orderId": f"md-{self.n}"}
+        self.bank.create_payment_link.side_effect = register
+        self.addCleanup(mock.patch.stopall)
+
+    def run_task(self):
+        tasks.process_lead("42", tasks.Config.ALLOWED_STATUS_IDS[0], tasks.Config.PIPELINE_ID)
+
+    def test_creates_order_and_posts_link_once(self):
+        self.run_task()
+        self.run_task()  # дубль вебхука
+        self.assertEqual(self.bank.create_payment_link.call_count, 1)
+        self.amo.update_lead.assert_called_once()
+        entry = payments_store.load_payments()["42"]
+        self.assertTrue(entry["link_posted"])
+        self.assertEqual(len(payments_store.get_orders(entry)), 1)
+
+    def test_retry_after_amocrm_failure_reuses_order(self):
+        import requests
+        self.amo.update_lead.side_effect = [requests.ConnectionError("boom"), None]
+        with self.assertRaises(requests.ConnectionError):
+            self.run_task()
+        self.assertFalse(payments_store.load_payments()["42"]["link_posted"])
+        self.run_task()
+        self.assertEqual(self.bank.create_payment_link.call_count, 1)
+        self.assertTrue(payments_store.load_payments()["42"]["link_posted"])
+
+    def test_amount_change_keeps_old_order_payable(self):
+        self.run_task()
+        self.lead["price"] = 200
+        self.run_task()
+        payments = payments_store.load_payments()
+        self.assertEqual(len(payments_store.get_orders(payments["42"])), 2)
+        old = payments_store.get_orders(payments["42"])[0]
+        self.assertEqual(payments_store.find_lead_by_order(payments, old["order_id"], old["order_number"]), "42")
+
+    def test_wrong_pipeline_in_amocrm_is_ignored(self):
+        self.lead["pipeline_id"] = 999999
+        self.run_task()
+        self.bank.create_payment_link.assert_not_called()
+
+    def test_legacy_entry_format_is_supported(self):
+        payments_store.save_payments({"42": {"order_number": "42_A1", "order_id": "md-old", "amount": 10000,
+                                              "form_url": "u", "created_at": 1}})
+        self.run_task()  # сумма та же, ссылка считается записанной
+        self.bank.create_payment_link.assert_not_called()
+
+
+class WebhookAccountTests(StoreTestCase):
+    def setUp(self):
+        super().setUp()
+        self.client = webhook_handler.app.test_client()
+        self.delay = mock.patch.object(webhook_handler.process_lead, "delay").start()
+        self.addCleanup(mock.patch.stopall)
+
+    def post(self, account_id):
+        form = {"leads[status][0][id]": "42", "leads[status][0][status_id]": "1",
+                "leads[status][0][pipeline_id]": "1", "account[id]": account_id}
+        return self.client.post("/webhook", data=form)
+
+    def test_own_account_is_processed(self):
+        self.assertEqual(self.post("1").status_code, 200)
+        self.delay.assert_called_once()
+
+    def test_foreign_account_is_ignored(self):
+        self.post("777")
+        self.delay.assert_not_called()
+
+    def test_missing_account_is_ignored(self):
+        self.client.post("/webhook", data={"leads[status][0][id]": "42", "leads[status][0][status_id]": "1",
+                                           "leads[status][0][pipeline_id]": "1"})
+        self.delay.assert_not_called()
 
 
 if __name__ == "__main__":
