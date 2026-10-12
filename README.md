@@ -43,7 +43,7 @@
 ## Тесты
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt   # нужен Python 3.10+
 python3 -m unittest discover -s tests -v
 ```
 
