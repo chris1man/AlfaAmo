@@ -22,7 +22,12 @@ class Config:
     # Alfa-Bank SBP
     SBP_MERCHANT_LOGIN = os.getenv("SBP_MERCHANT_LOGIN")
     SBP_MERCHANT_PASSWORD = os.getenv("SBP_MERCHANT_PASSWORD")
-    SBP_TEST_ENV = os.getenv("SBP_TEST_ENV", "true").lower() == "true"
+    # Явно "true" или "false": значение по умолчанию убрано, чтобы не уйти на тестовый стенд по ошибке
+    SBP_TEST_ENV = os.getenv("SBP_TEST_ENV", "").strip().lower() == "true"
+
+    # Этапы воронки amoCRM (значения по умолчанию соответствуют текущей воронке)
+    STATUS_PAID = int(os.getenv("AMO_STATUS_PAID", "54415022"))
+    STATUS_PAYMENT_FAILED = int(os.getenv("AMO_STATUS_PAYMENT_FAILED", "54415023"))
     SBP_RETURN_URL = os.getenv("SBP_RETURN_URL")
     SBP_PAYMENT_TOKEN = os.getenv("SBP_PAYMENT_TOKEN")
 
@@ -37,10 +42,12 @@ class Config:
             "AMOCRM_REDIRECT_URI", "AMOCRM_ACCESS_TOKEN", "AMOCRM_DOMAIN",
             "AMOCRM_ACCOUNT_ID", "AMO_PIPELINE_ID", "AMO_STATUS_ID",
             "AMO_CUSTOM_FIELD_ID", "SBP_MERCHANT_LOGIN", "SBP_MERCHANT_PASSWORD",
-            "SBP_RETURN_URL", "CALLBACK_SECRET_KEY"
+            "SBP_RETURN_URL", "CALLBACK_SECRET_KEY", "SBP_TEST_ENV"
         ]
         if not Config.SBP_TEST_ENV:
             required_vars.append("SBP_PAYMENT_TOKEN")
+        if os.getenv("SBP_TEST_ENV", "").strip().lower() not in ("true", "false"):
+            raise ValueError("SBP_TEST_ENV должен быть true или false")
         missing = [var for var in required_vars if not os.getenv(var)]
         if missing:
             raise ValueError(f"Отсутствуют обязательные переменные окружения: {', '.join(missing)}")

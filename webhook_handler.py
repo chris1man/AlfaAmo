@@ -27,8 +27,8 @@ amocrm_client = AmoCRMClient()
 sbp_client = SBPClient()
 CALLBACK_SECRET_KEY = Config.CALLBACK_SECRET_KEY
 
-STATUS_PAID = 54415022
-STATUS_PAYMENT_FAILED = 54415023
+STATUS_PAID = Config.STATUS_PAID
+STATUS_PAYMENT_FAILED = Config.STATUS_PAYMENT_FAILED
 # Операции банка, после которых оплата считается неуспешной
 DECLINED_OPERATIONS = {"declined", "declined_timeout"}
 

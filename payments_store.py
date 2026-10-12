@@ -7,7 +7,7 @@ from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
-PAYMENTS_FILE = "/root/AlfaAmo/payments.json"
+PAYMENTS_FILE = os.getenv("PAYMENTS_FILE", "/root/AlfaAmo/payments.json")
 LOCK_FILE = PAYMENTS_FILE + ".lock"
 
 

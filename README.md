@@ -18,35 +18,40 @@
    cd AlfaAmo
    ```
 
-## Управление логами
+## Настройка
 
-Система автоматически управляет логами с ограничениями:
-- **Максимальный размер файла**: 10 MB
-- **Время хранения**: 7 дней
-- **Автоматическая очистка**: ежедневно в 2:00
+Переменные окружения (файл `.env`, в git не попадает):
 
-Подробная документация: [docs/logs/](docs/logs/)
+| Переменная | Назначение |
+|---|---|
+| `AMOCRM_*`, `AMO_PIPELINE_ID`, `AMO_ALLOWED_STATUS_IDS`, `AMO_CUSTOM_FIELD_ID` | доступ к amoCRM, воронка, этапы запуска и поле со ссылкой |
+| `AMO_STATUS_PAID`, `AMO_STATUS_PAYMENT_FAILED` | этапы «оплачено» и «оплата не прошла» (по умолчанию 54415022 и 54415023) |
+| `SBP_MERCHANT_LOGIN`, `SBP_MERCHANT_PASSWORD`, `SBP_PAYMENT_TOKEN`, `SBP_RETURN_URL` | реквизиты Альфа-Банка |
+| `SBP_TEST_ENV` | обязательно `true` (тестовый стенд) или `false` (бой) |
+| `CALLBACK_SECRET_KEY` | ключ проверки подписи колбэка банка |
+| `CHECK_PAYMENTS_TOKEN` | секрет для `/check_payments` (заголовок `X-Check-Token`); без него эндпоинт доступен только с localhost |
+| `PAYMENTS_FILE` | путь к `payments.json` (по умолчанию `/root/AlfaAmo/payments.json`) |
 
-**📁 Структура документации:**
-- [docs/logs/README.md](docs/logs/README.md) - Главная страница документации по логам
-- [docs/logs/LOG_SUMMARY.md](docs/logs/LOG_SUMMARY.md) - Краткая сводка
-- [docs/logs/LOG_FILES_DESCRIPTION.md](docs/logs/LOG_FILES_DESCRIPTION.md) - Подробное описание
-- [docs/logs/LOG_MANAGEMENT.md](docs/logs/LOG_MANAGEMENT.md) - Управление логами
-- [docs/logs/CLEANUP_INSTRUCTIONS.md](docs/logs/CLEANUP_INSTRUCTIONS.md) - Инструкции по очистке
-- [docs/logs/TERMINAL_TROUBLESHOOTING.md](docs/logs/TERMINAL_TROUBLESHOOTING.md) - Решение проблем с терминалом
+## Как это работает
 
-### Быстрые команды
+1. amoCRM присылает вебхук `/webhook` при смене этапа, задача `process_lead` (Celery) создаёт заказ в банке и записывает ссылку в сделку.
+2. Банк вызывает `/payment_callback` (подпись обязательна). При успехе сделка получает тег «оплачено» и переходит на этап оплаты, при отказе на этап «оплата не прошла».
+3. Заказы сделки хранятся в `payments.json`; оплата по любой из выданных ссылок засчитывается. `/check_payments` опрашивает банк по тем же заказам.
+
+Интеграция okoCRM больше не используется и лежит в `archive/okocrm/`.
+
+## Тесты
 
 ```bash
-# Просмотр размера логов
-ls -lh *.log
+pip install -r requirements.txt
+python3 -m unittest discover -s tests -v
+```
 
-# Ручная очистка логов
+## Управление логами
+
+Логи пишутся с ротацией (10 МБ, 7 копий). Ручная очистка и настройка автоочистки:
+
+```bash
 python3 cleanup_logs.py
-
-# Настройка автоматической очистки
 ./setup_log_rotation.sh
-
-# Тестирование ротации логов
-python3 test_log_rotation.py
 ```
