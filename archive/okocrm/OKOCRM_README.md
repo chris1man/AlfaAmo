@@ -28,8 +28,8 @@
 - Поле суммы: `budget` (в рублях)
 
 ### Эквайринг:
-- Токен: `8areotnecfvrbi3chhc1k8i13h`
-- Callback токен: `q07nge4li7or5aa81b2cmkmt4k`
+- Токен: <значение убрано, см. переменные окружения>
+- Callback токен: <значение убрано, см. переменные окружения>
 - Callback URL: `https://alfa-amocrm.ru/payment_callback_oko`
 
 ## 🚀 Запуск системы
